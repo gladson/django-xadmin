@@ -2,20 +2,23 @@ import operator
 from xadmin import widgets
 
 from xadmin.util import get_fields_from_path, lookup_needs_distinct
-from django.core.exceptions import SuspiciousOperation, ImproperlyConfigured
+from django.core.exceptions import SuspiciousOperation, ImproperlyConfigured, ValidationError
 from django.db import models
 from django.db.models.fields import FieldDoesNotExist
 from django.db.models.related import RelatedObject
 from django.db.models.sql.query import LOOKUP_SEP, QUERY_TERMS
 from django.template import loader
 from django.utils.encoding import smart_str
+from django.utils.translation import ugettext as _
 
 from xadmin.filters import manager as filter_manager, FILTER_PREFIX, SEARCH_VAR, DateFieldListFilter, RelatedFieldSearchFilter
 from xadmin.sites import site
 from xadmin.views import BaseAdminPlugin, ListAdminView
 
+
 class IncorrectLookupParameters(Exception):
     pass
+
 
 class FilterPlugin(BaseAdminPlugin):
     list_filter = ()
@@ -68,20 +71,24 @@ class FilterPlugin(BaseAdminPlugin):
         return clean_lookup in self.list_filter
 
     def get_list_queryset(self, queryset):
-        lookup_params = dict([(smart_str(k)[len(FILTER_PREFIX):],v) for k,v in self.admin_view.params.items() \
-            if smart_str(k).startswith(FILTER_PREFIX) and v != ''])
+        lookup_params = dict([(smart_str(k)[len(FILTER_PREFIX):], v) for k, v in self.admin_view.params.items()
+                              if smart_str(k).startswith(FILTER_PREFIX) and v != ''])
+        for p_key, p_val in lookup_params.iteritems():
+            if p_val == "False":
+                lookup_params[p_key] = False
         use_distinct = False
 
         # for clean filters
         self.admin_view.has_query_param = bool(lookup_params)
-        self.admin_view.clean_query_url = self.admin_view.get_query_string(remove=\
-                [k for k in self.request.GET.keys() if k.startswith(FILTER_PREFIX)])
+        self.admin_view.clean_query_url = self.admin_view.get_query_string(remove=
+                                                                           [k for k in self.request.GET.keys() if k.startswith(FILTER_PREFIX)])
 
         # Normalize the types of keys
         if not self.free_query_filter:
             for key, value in lookup_params.items():
                 if not self.lookup_allowed(key, value):
-                    raise SuspiciousOperation("Filtering by %s not allowed" % key)
+                    raise SuspiciousOperation(
+                        "Filtering by %s not allowed" % key)
 
         self.filter_specs = []
         if self.list_filter:
@@ -89,9 +96,10 @@ class FilterPlugin(BaseAdminPlugin):
                 if callable(list_filter):
                     # This is simply a custom list filter class.
                     spec = list_filter(self.request, lookup_params,
-                        self.model, self)
+                                       self.model, self)
                 else:
                     field_path = None
+                    field_parts = []
                     if isinstance(list_filter, (tuple, list)):
                         # This is a custom FieldListFilter class for a given field.
                         field, field_list_filter_class = list_filter
@@ -102,25 +110,40 @@ class FilterPlugin(BaseAdminPlugin):
                         field, field_list_filter_class = list_filter, filter_manager.create
                     if not isinstance(field, models.Field):
                         field_path = field
-                        field = get_fields_from_path(self.model, field_path)[-1]
-                    spec = field_list_filter_class(field, self.request, lookup_params,
+                        field_parts = get_fields_from_path(
+                            self.model, field_path)
+                        field = field_parts[-1]
+                    spec = field_list_filter_class(
+                        field, self.request, lookup_params,
                         self.model, self.admin_view, field_path=field_path)
+
+                    if len(field_parts)>1:
+                        # Add related model name to title
+                        spec.title = "%s %s"%(field_parts[-2].name,spec.title)
+
                     # Check if we need to use distinct()
                     use_distinct = (use_distinct or
                                     lookup_needs_distinct(self.opts, field_path))
                 if spec and spec.has_output():
-                    new_qs = spec.do_filte(queryset)
+                    try:
+                        new_qs = spec.do_filte(queryset)
+                    except ValidationError, e:
+                        new_qs = None
+                        self.admin_view.message_user(_("<b>Filtering error:</b> %s") % e.messages[0], 'error')
                     if new_qs is not None:
                         queryset = new_qs
+
                     self.filter_specs.append(spec)
 
         self.has_filters = bool(self.filter_specs)
         self.admin_view.filter_specs = self.filter_specs
-        self.admin_view.used_filter_num = len(filter(lambda f: f.is_used, self.filter_specs))
+        self.admin_view.used_filter_num = len(
+            filter(lambda f: f.is_used, self.filter_specs))
 
         try:
             for key, value in lookup_params.items():
-                use_distinct = (use_distinct or lookup_needs_distinct(self.opts, key))
+                use_distinct = (
+                    use_distinct or lookup_needs_distinct(self.opts, key))
         except FieldDoesNotExist, e:
             raise IncorrectLookupParameters(e)
 
@@ -166,30 +189,26 @@ class FilterPlugin(BaseAdminPlugin):
     # Media
     def get_media(self, media):
         if bool(filter(lambda s: isinstance(s, DateFieldListFilter), self.filter_specs)):
-            media.add_js([self.static('xadmin/js/date.js')])
-            media.add_js([self.static('xadmin/js/daterangepicker.js')])
-            media.add_js([self.static('xadmin/js/bootstrap-datepicker.js')])
-            media.add_css({'screen': [self.static('xadmin/css/daterangepicker.css')]})
+            media = media + self.vendor('datepicker.css', 'datepicker.js',
+                                        'xadmin.widget.datetime.js')
         if bool(filter(lambda s: isinstance(s, RelatedFieldSearchFilter), self.filter_specs)):
-            media.add_js([self.static('xadmin/js/select2.js')])
-            media.add_js([self.static('xadmin/js/form.js')])
-            media.add_css({'screen': [self.static('xadmin/css/select2.css')]})
-        media.add_js([self.static('xadmin/js/filters.js')])
-        return media
+            media = media + self.vendor(
+                'select.js', 'select.css', 'xadmin.widget.select.js')
+        return media + self.vendor('xadmin.plugin.filters.js')
 
     # Block Views
     def block_nav_menu(self, context, nodes):
         if self.has_filters:
-            nodes.append(loader.render_to_string('xadmin/filters.html', context_instance=context))
+            nodes.append(loader.render_to_string('xadmin/blocks/model_list.nav_menu.filters.html', context_instance=context))
 
     def block_nav_form(self, context, nodes):
         if self.search_fields:
-            nodes.append(loader.render_to_string('xadmin/blocks/search_form.html', \
-                {'search_var': SEARCH_VAR, 
-                'remove_search_url': self.admin_view.get_query_string(remove=[SEARCH_VAR]),
-                'search_form_params': self.admin_view.get_form_params(remove=[SEARCH_VAR])}, \
-                context_instance=context))
+            nodes.append(
+                loader.render_to_string(
+                    'xadmin/blocks/model_list.nav_form.search_form.html',
+                    {'search_var': SEARCH_VAR,
+                        'remove_search_url': self.admin_view.get_query_string(remove=[SEARCH_VAR]),
+                        'search_form_params': self.admin_view.get_form_params(remove=[SEARCH_VAR])},
+                    context_instance=context))
 
 site.register_plugin(FilterPlugin, ListAdminView)
-
-

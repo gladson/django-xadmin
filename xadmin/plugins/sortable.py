@@ -1,11 +1,9 @@
-
-
-from django.template import loader
-
+#coding:utf-8
 from xadmin.sites import site
 from xadmin.views import BaseAdminPlugin, ListAdminView
 
 SORTBY_VAR = '_sort_by'
+
 
 class SortablePlugin(BaseAdminPlugin):
 
@@ -14,7 +12,7 @@ class SortablePlugin(BaseAdminPlugin):
     # Media
     def get_media(self, media):
         if self.sortable_fields and self.request.GET.get(SORTBY_VAR):
-            media.add_js([self.static('xadmin/js/sortable.js')])
+            media = media + self.vendor('xadmin.plugin.sortable.js')
         return media
 
     # Block Views
@@ -36,5 +34,3 @@ class SortablePlugin(BaseAdminPlugin):
 
 
 site.register_plugin(SortablePlugin, ListAdminView)
-
-

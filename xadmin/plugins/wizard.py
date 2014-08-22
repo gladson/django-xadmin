@@ -1,5 +1,6 @@
 import re
 from django import forms
+from django.db import models
 from django.template import loader
 from django.contrib.formtools.wizard.storage import get_storage
 from django.contrib.formtools.wizard.forms import ManagementForm
@@ -10,9 +11,11 @@ from django.forms.models import modelform_factory
 from xadmin.sites import site
 from xadmin.views import BaseAdminPlugin, ModelFormAdminView
 
+
 def normalize_name(name):
     new = re.sub('(((?<=[a-z])[A-Z])|([A-Z](?![A-Z]|$)))', '_\\1', name)
     return new.lower().strip('_')
+
 
 class WizardFormPlugin(BaseAdminPlugin):
 
@@ -24,6 +27,7 @@ class WizardFormPlugin(BaseAdminPlugin):
     initial_dict = None
     instance_dict = None
     condition_dict = None
+    file_storage = None
 
     def _get_form_prefix(self, step=None):
         if step is None:
@@ -34,7 +38,8 @@ class WizardFormPlugin(BaseAdminPlugin):
         if not hasattr(self, '_form_list'):
             init_form_list = SortedDict()
 
-            assert len(self.wizard_form_list) > 0, 'at least one form is needed'
+            assert len(
+                self.wizard_form_list) > 0, 'at least one form is needed'
 
             for i, form in enumerate(self.wizard_form_list):
                 init_form_list[unicode(form[0])] = form[1]
@@ -53,7 +58,8 @@ class WizardFormPlugin(BaseAdminPlugin):
     def prepare_form(self, __):
         # init storage and step helper
         self.prefix = normalize_name(self.__class__.__name__)
-        self.storage = get_storage(self.storage_name, self.prefix, self.request,
+        self.storage = get_storage(
+            self.storage_name, self.prefix, self.request,
             getattr(self, 'file_storage', None))
         self.steps = StepsHelper(self)
         self.wizard_goto_step = False
@@ -69,13 +75,15 @@ class WizardFormPlugin(BaseAdminPlugin):
             # form. (This makes stepping back a lot easier).
             wizard_goto_step = self.request.POST.get('wizard_goto_step', None)
             if wizard_goto_step and int(wizard_goto_step) < len(self.get_form_list()):
-                self.storage.current_step = self.get_form_list().keys()[int(wizard_goto_step)]
+                self.storage.current_step = self.get_form_list(
+                ).keys()[int(wizard_goto_step)]
                 self.admin_view.model_form = self.get_step_form()
                 self.wizard_goto_step = True
                 return
 
             # Check if form was refreshed
-            management_form = ManagementForm(self.request.POST, prefix=self.prefix)
+            management_form = ManagementForm(
+                self.request.POST, prefix=self.prefix)
             if not management_form.is_valid():
                 raise ValidationError(
                     'ManagementForm data is missing or has been tampered.')
@@ -91,7 +99,7 @@ class WizardFormPlugin(BaseAdminPlugin):
 
     def get_form_layout(self, __):
         attrs = self.get_form_list()[self.steps.current]
-        if type(attrs) is dict and attrs.has_key('layout'):
+        if type(attrs) is dict and 'layout' in attrs:
             self.admin_view.form_layout = attrs['layout']
         else:
             self.admin_view.form_layout = None
@@ -102,19 +110,19 @@ class WizardFormPlugin(BaseAdminPlugin):
             step = self.steps.current
         attrs = self.get_form_list()[step]
         if type(attrs) in (list, tuple):
-            return modelform_factory(self.model, form=forms.ModelForm, \
-                fields=attrs, formfield_callback=self.admin_view.formfield_for_dbfield)
+            return modelform_factory(self.model, form=forms.ModelForm,
+                                     fields=attrs, formfield_callback=self.admin_view.formfield_for_dbfield)
         elif type(attrs) is dict:
             if attrs.get('fields', None):
-                return modelform_factory(self.model, form=forms.ModelForm, \
-                    fields=attrs['fields'], formfield_callback=self.admin_view.formfield_for_dbfield)
+                return modelform_factory(self.model, form=forms.ModelForm,
+                                         fields=attrs['fields'], formfield_callback=self.admin_view.formfield_for_dbfield)
             if attrs.get('callback', None):
                 callback = attrs['callback']
                 if callable(callback):
                     return callback(self)
                 elif hasattr(self.admin_view, str(callback)):
                     return getattr(self.admin_view, str(callback))(self)
-        elif isinstance(attrs, forms.BaseForm):
+        elif issubclass(attrs, forms.BaseForm):
             return attrs
         return None
 
@@ -123,8 +131,8 @@ class WizardFormPlugin(BaseAdminPlugin):
             step = self.steps.current
         form = self.get_step_form(step)
         return form(prefix=self._get_form_prefix(step),
-            data=self.storage.get_step_data(step),
-            files=self.storage.get_step_files(step))
+                    data=self.storage.get_step_data(step),
+                    files=self.storage.get_step_files(step))
 
     def get_form_datas(self, datas):
         datas['prefix'] = self._get_form_prefix()
@@ -132,7 +140,7 @@ class WizardFormPlugin(BaseAdminPlugin):
             datas.update({
                 'data': self.storage.get_step_data(self.steps.current),
                 'files': self.storage.get_step_files(self.steps.current)
-                })
+            })
         return datas
 
     def valid_forms(self, __):
@@ -140,13 +148,38 @@ class WizardFormPlugin(BaseAdminPlugin):
             # goto get_response directly
             return False
         return __()
-    
+
     def _done(self):
         cleaned_data = self.get_all_cleaned_data()
-        form = modelform_factory(self.model, form=forms.ModelForm, 
-            formfield_callback=self.admin_view.formfield_for_dbfield)
-        form_obj = form(data=cleaned_data, instance=self.admin_view.org_obj)
-        self.admin_view.new_obj = form_obj.save(commit=True)
+        exclude = self.admin_view.exclude
+
+        opts = self.admin_view.opts
+        instance = self.admin_view.org_obj or self.admin_view.model()
+
+        file_field_list = []
+        for f in opts.fields:
+            if not f.editable or isinstance(f, models.AutoField) \
+                    or not f.name in cleaned_data:
+                continue
+            if exclude and f.name in exclude:
+                continue
+            # Defer saving file-type fields until after the other fields, so a
+            # callable upload_to can use the values from other fields.
+            if isinstance(f, models.FileField):
+                file_field_list.append(f)
+            else:
+                f.save_form_data(instance, cleaned_data[f.name])
+
+        for f in file_field_list:
+            f.save_form_data(instance, cleaned_data[f.name])
+
+        instance.save()
+
+        for f in opts.many_to_many:
+            if f.name in cleaned_data:
+                f.save_form_data(instance, cleaned_data[f.name])
+
+        self.admin_view.new_obj = instance
 
     def save_forms(self, __):
         # if the form is valid, store the cleaned data and files.
@@ -171,7 +204,7 @@ class WizardFormPlugin(BaseAdminPlugin):
             "show_save_as_new": False,
             "show_save_and_add_another": False,
             "show_save_and_continue": False,
-            })
+        })
         return context
 
     def get_response(self, response):
@@ -201,12 +234,13 @@ class WizardFormPlugin(BaseAdminPlugin):
         for form_key, attrs in self.get_form_list().items():
             form_obj = self.get_step_form_obj(form_key)
             if form_obj.is_valid():
-                if type(attrs) is dict and attrs.has_key('convert'):
+                if type(attrs) is dict and 'convert' in attrs:
                     callback = attrs['convert']
                     if callable(callback):
                         callback(self, cleaned_data, form_obj)
                     elif hasattr(self.admin_view, str(callback)):
-                        getattr(self.admin_view, str(callback))(self, cleaned_data, form_obj)
+                        getattr(self.admin_view,
+                                str(callback))(self, cleaned_data, form_obj)
                 elif isinstance(form_obj.cleaned_data, (tuple, list)):
                     cleaned_data.update({
                         'formset-%s' % form_key: form_obj.cleaned_data
@@ -272,13 +306,13 @@ class WizardFormPlugin(BaseAdminPlugin):
                 'current_step': self.steps.current,
             }),
         }
-        nodes.append(loader.render_to_string('xadmin/blocks/wizard_nav.html', context_instance=context))
+        nodes.append(loader.render_to_string('xadmin/blocks/model_form.before_fieldsets.wizard.html', context_instance=context))
 
     def block_submit_line(self, context, nodes):
         context.update(dict(self.storage.extra_data))
         context['wizard'] = {
             'steps': self.steps
         }
-        nodes.append(loader.render_to_string('xadmin/blocks/wizard_btn.html', context_instance=context))
+        nodes.append(loader.render_to_string('xadmin/blocks/model_form.submit_line.wizard.html', context_instance=context))
 
 site.register_plugin(WizardFormPlugin, ModelFormAdminView)

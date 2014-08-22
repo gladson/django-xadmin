@@ -27,7 +27,7 @@ pip-log.txt
 nosetests.xml
 
 # Translations
-*.mo
+#*.mo
 
 # Mr Developer
 .mr.developer.cfg
@@ -37,3 +37,9 @@ nosetests.xml
 .DS_Store
 .c9revisions
 .settings
+xadmin/static/xadmin/components/
+xadmin/static/xadmin/bower_components/
+
+.idea
+*~
+demo_app/data.db

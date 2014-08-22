@@ -1,7 +1,4 @@
-
-import datetime
-import decimal
-
+import django
 from django.db import models
 from django.db.models.sql.query import LOOKUP_SEP
 from django.db.models.deletion import Collector
@@ -15,6 +12,10 @@ from django.utils.encoding import force_unicode, smart_unicode, smart_str
 from django.utils.translation import ungettext
 from django.core.urlresolvers import reverse
 from django.conf import settings
+from django.forms import Media
+from django.utils.translation import get_language
+import datetime
+import decimal
 
 if 'django.contrib.staticfiles' in settings.INSTALLED_APPS:
     from django.contrib.staticfiles.templatetags.staticfiles import static
@@ -31,6 +32,68 @@ try:
 except ImportError:
     from django.utils.timezone import localtime as tz_localtime
 
+try:
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    username_field = User.USERNAME_FIELD
+except Exception:
+    from django.contrib.auth.models import User
+    username_field = 'username'
+
+
+def xstatic(*tags):
+    from vendors import vendors
+    node = vendors
+
+    fs = []
+    lang = get_language()
+
+    for tag in tags:
+        try:
+            for p in tag.split('.'):
+                node = node[p]
+        except Exception, e:
+            if tag.startswith('xadmin'):
+                file_type = tag.split('.')[-1]
+                if file_type in ('css', 'js'):
+                    node = "xadmin/%s/%s" % (file_type, tag)
+                else:
+                    raise e
+            else:
+                raise e
+
+        if type(node) in (str, unicode):
+            files = node
+        else:
+            mode = 'dev'
+            if not settings.DEBUG:
+                mode = getattr(settings, 'STATIC_USE_CDN',
+                               False) and 'cdn' or 'production'
+
+            if mode == 'cdn' and mode not in node:
+                mode = 'production'
+            if mode == 'production' and mode not in node:
+                mode = 'dev'
+            files = node[mode]
+
+        files = type(files) in (list, tuple) and files or [files, ]
+        fs.extend(files)
+
+    return [f.startswith('http://') and f or static(f) for f in fs]
+
+
+def vendor(*tags):
+    media = Media()
+    for tag in tags:
+        file_type = tag.split('.')[-1]
+        files = xstatic(tag)
+        if file_type == 'js':
+            media.add_js(files)
+        elif file_type == 'css':
+            media.add_css({'screen': files})
+    return media
+
+
 def lookup_needs_distinct(opts, lookup_path):
     """
     Returns True if 'distinct()' should be used to query the given lookup path.
@@ -41,8 +104,9 @@ def lookup_needs_distinct(opts, lookup_path):
          isinstance(field.rel, models.ManyToManyRel)) or
         (isinstance(field, models.related.RelatedObject) and
          not field.field.unique)):
-         return True
+        return True
     return False
+
 
 def prepare_lookup_value(key, value):
     """
@@ -52,12 +116,13 @@ def prepare_lookup_value(key, value):
     if key.endswith('__in'):
         value = value.split(',')
     # if key ends with __isnull, special case '' and false
-    if key.endswith('__isnull'):
+    if key.endswith('__isnull') and type(value) == str:
         if value.lower() in ('', 'false'):
             value = False
         else:
             value = True
     return value
+
 
 def quote(s):
     """
@@ -147,11 +212,11 @@ def get_deleted_objects(objs, opts, user, admin_site, using):
         else:
             # Don't display link to edit, because it either has no
             # admin or is edited inline.
-            return u'%s: %s' % (capfirst(opts.verbose_name),
-                                force_unicode(obj))
+            return mark_safe(u'<span class="label label-info">%s:</span> %s' %
+                             (escape(capfirst(opts.verbose_name)),
+                              escape(obj)))
 
     to_delete = collector.nested(format_callback)
-
     protected = [format_callback(obj) for obj in collector.protected]
 
     return to_delete, perms_needed, protected
@@ -160,7 +225,7 @@ def get_deleted_objects(objs, opts, user, admin_site, using):
 class NestedObjects(Collector):
     def __init__(self, *args, **kwargs):
         super(NestedObjects, self).__init__(*args, **kwargs)
-        self.edges = {} # {from_instance: [to_instances]}
+        self.edges = {}  # {from_instance: [to_instances]}
         self.protected = set()
 
     def add_edge(self, source, target):
@@ -258,7 +323,7 @@ def lookup_field(name, obj, model_admin=None):
             attr = name
             value = attr(obj)
         elif (model_admin is not None and hasattr(model_admin, name) and
-          not name == '__str__' and not name == '__unicode__'):
+              not name == '__str__' and not name == '__unicode__'):
             attr = getattr(model_admin, name)
             value = attr(obj)
         else:
@@ -303,7 +368,8 @@ def label_for_field(name, model, model_admin=None, return_attr=False):
             elif hasattr(model, name):
                 attr = getattr(model, name)
             else:
-                message = "Unable to lookup '%s' on %s" % (name, model._meta.object_name)
+                message = "Unable to lookup '%s' on %s" % (
+                    name, model._meta.object_name)
                 if model_admin:
                     message += " or %s" % (model_admin.__class__.__name__,)
                 raise AttributeError(message)
@@ -322,20 +388,23 @@ def label_for_field(name, model, model_admin=None, return_attr=False):
     else:
         return label
 
+
 def help_text_for_field(name, model):
     try:
         help_text = model._meta.get_field_by_name(name)[0].help_text
     except models.FieldDoesNotExist:
         help_text = ""
     return smart_unicode(help_text)
-    
+
+
 def admin_urlname(value, arg):
-    return 'admin:%s_%s_%s' % (value.app_label, value.module_name, arg)
+    return 'xadmin:%s_%s_%s' % (value.app_label, value.module_name, arg)
+
 
 def boolean_icon(field_val):
-    icon_url = static('xadmin/img/icon-%s.png' %
-                      {True: 'yes', False: 'no', None: 'unknown'}[field_val])
-    return mark_safe(u'<img src="%s" alt="%s" />' % (icon_url, field_val))
+    return mark_safe(u'<i class="%s" alt="%s"></i>' % (
+        {True: 'fa fa-check-circle text-success', False: 'fa fa-times-circle text-error', None: 'fa fa-question-circle muted'}[field_val], field_val))
+
 
 def display_for_field(value, field):
     from xadmin.views.list import EMPTY_CHANGELIST_VALUE
@@ -361,6 +430,7 @@ def display_for_field(value, field):
     else:
         return smart_unicode(value)
 
+
 def display_for_value(value, boolean=False):
     from xadmin.views.list import EMPTY_CHANGELIST_VALUE
 
@@ -377,6 +447,7 @@ def display_for_value(value, boolean=False):
     else:
         return smart_unicode(value)
 
+
 class NotRelationField(Exception):
     pass
 
@@ -384,7 +455,7 @@ class NotRelationField(Exception):
 def get_model_from_relation(field):
     if isinstance(field, models.related.RelatedObject):
         return field.model
-    elif getattr(field, 'rel'): # or isinstance?
+    elif getattr(field, 'rel'):  # or isinstance?
         return field.rel.to
     else:
         raise NotRelationField
@@ -405,7 +476,7 @@ def reverse_field_path(model, path):
     for piece in pieces:
         field, model, direct, m2m = parent._meta.get_field_by_name(piece)
         # skip trailing data field if extant:
-        if len(reversed_path) == len(pieces)-1: # final iteration
+        if len(reversed_path) == len(pieces) - 1:  # final iteration
             try:
                 get_model_from_relation(field)
             except NotRelationField:
@@ -462,8 +533,23 @@ def get_limit_choices_to_from_path(model, path):
         fields and hasattr(fields[-1], 'rel') and
         getattr(fields[-1].rel, 'limit_choices_to', None))
     if not limit_choices_to:
-        return models.Q() # empty Q
+        return models.Q()  # empty Q
     elif isinstance(limit_choices_to, models.Q):
-        return limit_choices_to # already a Q
+        return limit_choices_to  # already a Q
     else:
-        return models.Q(**limit_choices_to) # convert dict to Q
+        return models.Q(**limit_choices_to)  # convert dict to Q
+
+
+def sortkeypicker(keynames):
+    negate = set()
+    for i, k in enumerate(keynames):
+        if k[:1] == '-':
+            keynames[i] = k[1:]
+            negate.add(k[1:])
+    def getit(adict):
+        composite = [adict[k] for k in keynames]
+        for i, (k, v) in enumerate(zip(keynames, composite)):
+            if k in negate:
+                composite[i] = -v
+        return composite
+    return getit

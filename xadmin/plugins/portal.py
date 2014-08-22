@@ -1,17 +1,16 @@
-
-from django.template import loader
-
+#coding:utf-8
 from xadmin.sites import site
 from xadmin.models import UserSettings
 from xadmin.views import BaseAdminPlugin, ModelFormAdminView, DetailAdminView
 from xadmin.layout import Fieldset, Column
 
+
 class BasePortalPlugin(BaseAdminPlugin):
 
     # Media
     def get_media(self, media):
-        media.add_js([self.static('xadmin/js/portal.js')])
-        return media
+        return media + self.vendor('xadmin.plugin.portal.js')
+
 
 def get_layout_objects(layout, clz, objects):
     for i, layout_object in enumerate(layout.fields):
@@ -19,6 +18,7 @@ def get_layout_objects(layout, clz, objects):
             objects.append(layout_object)
         elif hasattr(layout_object, 'get_field_names'):
             get_layout_objects(layout_object, clz, objects)
+
 
 class ModelFormPlugin(BasePortalPlugin):
 
@@ -43,10 +43,12 @@ class ModelFormPlugin(BasePortalPlugin):
             fs_map[f.css_id] = f
 
         try:
-            layout_pos = UserSettings.objects.get(user=self.user, key=self._portal_key()).value
+            layout_pos = UserSettings.objects.get(
+                user=self.user, key=self._portal_key()).value
             layout_cs = layout_pos.split('|')
             for i, c in enumerate(cs):
-                c.fields = [fs_map.pop(j) for j in layout_cs[i].split(',') if fs_map.has_key(j)] if len(layout_cs) > i else []
+                c.fields = [fs_map.pop(j) for j in layout_cs[i].split(
+                    ',') if j in fs_map] if len(layout_cs) > i else []
             if fs_map and cs:
                 cs[0].fields.extend(fs_map.values())
         except Exception:
@@ -57,6 +59,7 @@ class ModelFormPlugin(BasePortalPlugin):
     def block_form_top(self, context, node):
         # put portal key and submit url to page
         return "<input type='hidden' id='_portal_key' value='%s' />" % self._portal_key()
+
 
 class ModelDetailPlugin(ModelFormPlugin):
 
@@ -69,5 +72,3 @@ class ModelDetailPlugin(ModelFormPlugin):
 
 site.register_plugin(ModelFormPlugin, ModelFormAdminView)
 site.register_plugin(ModelDetailPlugin, DetailAdminView)
-
-

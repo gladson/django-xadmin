@@ -7,7 +7,9 @@ from django.utils.html import escape
 from django.utils.translation import ugettext as _
 from xadmin.util import unquote, get_deleted_objects
 
-from base import ModelAdminView, filter_hook, csrf_protect_m
+from xadmin.views.edit import UpdateAdminView
+from xadmin.views.detail import DetailAdminView
+from xadmin.views.base import ModelAdminView, filter_hook, csrf_protect_m
 
 
 class DeleteAdminView(ModelAdminView):
@@ -34,9 +36,9 @@ class DeleteAdminView(ModelAdminView):
     @filter_hook
     def get(self, request, object_id):
         context = self.get_context()
-        
-        return TemplateResponse(request, self.delete_confirmation_template or self.get_template_list("delete_confirmation.html"), \
-            context, current_app=self.admin_site.name)
+
+        return TemplateResponse(request, self.delete_confirmation_template or
+                                self.get_template_list("views/model_delete_confirm.html"), context, current_app=self.admin_site.name)
 
     @csrf_protect_m
     @transaction.commit_on_success
@@ -44,7 +46,7 @@ class DeleteAdminView(ModelAdminView):
     def post(self, request, object_id):
         if self.perms_needed:
             raise PermissionDenied
-        
+
         self.delete_model()
 
         response = self.post_response()
@@ -63,7 +65,8 @@ class DeleteAdminView(ModelAdminView):
     @filter_hook
     def get_context(self):
         if self.perms_needed or self.protected:
-            title = _("Cannot delete %(name)s") % {"name": force_unicode(self.opts.verbose_name)}
+            title = _("Cannot delete %(name)s") % {"name":
+                                                   force_unicode(self.opts.verbose_name)}
         else:
             title = _("Are you sure?")
 
@@ -79,13 +82,25 @@ class DeleteAdminView(ModelAdminView):
         return context
 
     @filter_hook
+    def get_breadcrumb(self):
+        bcs = super(DeleteAdminView, self).get_breadcrumb()
+        bcs.append({
+            'title': force_unicode(self.obj),
+            'url': self.get_object_url(self.obj)
+        })
+        item = {'title': _('Delete')}
+        if self.has_delete_permission():
+            item['url'] = self.model_admin_url('delete', self.obj.pk)
+        bcs.append(item)
+
+        return bcs
+
+    @filter_hook
     def post_response(self):
 
-        self.message_user(_('The %(name)s "%(obj)s" was deleted successfully.') % \
-            {'name': force_unicode(self.opts.verbose_name), 'obj': force_unicode(self.obj)}, 'success')
+        self.message_user(_('The %(name)s "%(obj)s" was deleted successfully.') %
+                          {'name': force_unicode(self.opts.verbose_name), 'obj': force_unicode(self.obj)}, 'success')
 
         if not self.has_view_permission():
             return self.get_admin_url('index')
         return self.model_admin_url('changelist')
-
-

@@ -3,12 +3,37 @@ from django import forms
 from django.utils.translation import ugettext as _
 from django.utils.safestring import mark_safe
 from xadmin.sites import site
-from xadmin.views import BaseAdminPlugin, ModelFormAdminView, DetailAdminView
+from xadmin.views import BaseAdminPlugin, ModelFormAdminView, DetailAdminView, ListAdminView
+
+
+def get_gallery_modal():
+    return """
+        <!-- modal-gallery is the modal dialog used for the image gallery -->
+        <div id="modal-gallery" class="modal modal-gallery fade" tabindex="-1">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+                <h4 class="modal-title"></h4>
+              </div>
+              <div class="modal-body"><div class="modal-image"><h1 class="loader"><i class="fa-spinner fa-spin fa fa-large loader"></i></h1></div></div>
+              <div class="modal-footer">
+                  <a class="btn btn-info modal-prev"><i class="fa fa-arrow-left"></i> <span>%s</span></a>
+                  <a class="btn btn-primary modal-next"><span>%s</span> <i class="fa fa-arrow-right"></i></a>
+                  <a class="btn btn-success modal-play modal-slideshow" data-slideshow="5000"><i class="fa fa-play"></i> <span>%s</span></a>
+                  <a class="btn btn-default modal-download" target="_blank"><i class="fa fa-download"></i> <span>%s</span></a>
+              </div>
+            </div><!-- /.modal-content -->
+          </div><!-- /.modal-dialog -->
+        </div>
+    """ % (_('Previous'), _('Next'), _('Slideshow'), _('Download'))
+
 
 class AdminImageField(forms.ImageField):
-        
+
     def widget_attrs(self, widget):
         return {'label': self.label}
+
 
 class AdminImageWidget(forms.FileInput):
     """
@@ -20,11 +45,12 @@ class AdminImageWidget(forms.FileInput):
     def render(self, name, value, attrs=None):
         output = []
         if value and hasattr(value, "url"):
-            label=self.attrs.get('label', name)
-            output.append('<a href="%s" target="_blank" title="%s" rel="gallery"><img src="%s" class="field_img"/></a><br/>%s ' % \
-                (value.url, label, value.url, _('Change:')))
+            label = self.attrs.get('label', name)
+            output.append('<a href="%s" target="_blank" title="%s" data-gallery="gallery"><img src="%s" class="field_img"/></a><br/>%s ' %
+                         (value.url, label, value.url, _('Change:')))
         output.append(super(AdminImageWidget, self).render(name, value, attrs))
         return mark_safe(u''.join(output))
+
 
 class ModelDetailPlugin(BaseAdminPlugin):
 
@@ -43,42 +69,51 @@ class ModelDetailPlugin(BaseAdminPlugin):
         if isinstance(result.field, models.ImageField):
             if result.value:
                 img = getattr(result.obj, field_name)
-                result.text = mark_safe('<a href="%s" target="_blank" title="%s" rel="gallery"><img src="%s" class="field_img"/></a>' % (img.url, result.label, img.url))
+                result.text = mark_safe('<a href="%s" target="_blank" title="%s" data-gallery="gallery"><img src="%s" class="field_img"/></a>' % (img.url, result.label, img.url))
                 self.include_image = True
         return result
 
     # Media
     def get_media(self, media):
         if self.include_image:
-            media.add_js([self.static('xadmin/js/load-image.min.js'), self.static('xadmin/js/bootstrap-image-gallery.min.js')])
-            media.add_css({'screen': [self.static('xadmin/css/bootstrap-image-gallery.min.css')]})
+            media = media + self.vendor('image-gallery.js',
+                                        'image-gallery.css')
         return media
 
     def block_before_fieldsets(self, context, node):
         if self.include_image:
-            return """
-              <div id="gallery" data-toggle="modal-gallery" data-target="#modal-gallery">
-                <!-- modal-gallery is the modal dialog used for the image gallery -->
-                <div id="modal-gallery" class="modal modal-gallery hide fade" tabindex="-1">
-                    <div class="modal-header">
-                        <a class="close" data-dismiss="modal">&times;</a>
-                        <h3 class="modal-title"></h3>
-                    </div>
-                    <div class="modal-body"><div class="modal-image"></div></div>
-                    <div class="modal-footer">
-                        <a class="btn btn-primary modal-next">Next <i class="icon-arrow-right icon-white"></i></a>
-                        <a class="btn btn-info modal-prev"><i class="icon-arrow-left icon-white"></i> Previous</a>
-                        <a class="btn btn-success modal-play modal-slideshow" data-slideshow="5000"><i class="icon-play icon-white"></i> Slideshow</a>
-                        <a class="btn modal-download" target="_blank"><i class="icon-download"></i> Download</a>
-                    </div>
-                </div>
-            """
+            return '<div id="gallery" data-toggle="modal-gallery" data-target="#modal-gallery">'
 
     def block_after_fieldsets(self, context, node):
         if self.include_image:
             return "</div>"
 
+    def block_extrabody(self, context, node):
+        if self.include_image:
+            return get_gallery_modal()
+
+
+class ModelListPlugin(BaseAdminPlugin):
+
+    list_gallery = False
+
+    def init_request(self, *args, **kwargs):
+        return bool(self.list_gallery)
+
+    # Media
+    def get_media(self, media):
+        return media + self.vendor('image-gallery.js', 'image-gallery.css')
+
+    def block_results_top(self, context, node):
+        return '<div id="gallery" data-toggle="modal-gallery" data-target="#modal-gallery">'
+
+    def block_results_bottom(self, context, node):
+        return "</div>"
+
+    def block_extrabody(self, context, node):
+        return get_gallery_modal()
+
+
 site.register_plugin(ModelDetailPlugin, DetailAdminView)
 site.register_plugin(ModelDetailPlugin, ModelFormAdminView)
-
-
+site.register_plugin(ModelListPlugin, ListAdminView)

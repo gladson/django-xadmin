@@ -5,12 +5,14 @@ from django.utils.encoding import smart_str
 from django.utils.safestring import mark_safe
 from django.db.models.sql.query import LOOKUP_SEP
 from django.db.models.related import RelatedObject
+from django.utils.translation import ugettext as _
 from django.db import models
 
 from xadmin.sites import site
 from xadmin.views import BaseAdminPlugin, ListAdminView, CreateAdminView, UpdateAdminView, DeleteAdminView
 
 RELATE_PREFIX = '_rel_'
+
 
 class RelateMenuPlugin(BaseAdminPlugin):
 
@@ -20,7 +22,7 @@ class RelateMenuPlugin(BaseAdminPlugin):
     def get_related_list(self):
         if hasattr(self, '_related_acts'):
             return self._related_acts
-            
+
         _related_acts = []
         for r in self.opts.get_all_related_objects() + self.opts.get_all_related_many_to_many_objects():
             if self.related_list and (r.get_accessor_name() not in self.related_list):
@@ -36,10 +38,10 @@ class RelateMenuPlugin(BaseAdminPlugin):
 
         self._related_acts = _related_acts
         return self._related_acts
-    
+
     def related_link(self, instance):
-        links =[]
-        for r, view_perm, add_perm in self.get_related_list():            
+        links = []
+        for r, view_perm, add_perm in self.get_related_list():
             label = r.opts.app_label
             model_name = r.opts.module_name
             f = r.field
@@ -50,27 +52,36 @@ class RelateMenuPlugin(BaseAdminPlugin):
 
             link = ''.join(('<li class="with_menu_btn">',
 
-            '<a href="%s?%s=%s" title="%s"><i class="icon icon-th-list"></i> %s</a>' % \
-                (reverse('%s:%s_%s_changelist' % (self.admin_site.app_name, label, model_name)), \
-                    RELATE_PREFIX + lookup_name, str(instance.pk), verbose_name, verbose_name) if view_perm else \
-            '<a><span class="muted"><i class="icon icon-blank"></i> %s</span></a>' % verbose_name, 
+                            '<a href="%s?%s=%s" title="%s"><i class="icon fa fa-th-list"></i> %s</a>' %
+                          (
+                            reverse('%s:%s_%s_changelist' % (
+                                    self.admin_site.app_name, label, model_name)),
+                            RELATE_PREFIX + lookup_name, str(instance.pk), verbose_name, verbose_name) if view_perm else
+                            '<a><span class="text-muted"><i class="icon fa fa-blank"></i> %s</span></a>' % verbose_name,
 
-            '<a class="add_link dropdown-menu-btn" href="%s?%s=%s"><i class="icon icon-plus pull-right"></i></a>' % \
-                (reverse('%s:%s_%s_add' % (self.admin_site.app_name, label, model_name)), \
-                    RELATE_PREFIX + lookup_name, str(instance.pk)) if add_perm else "",
+                            '<a class="add_link dropdown-menu-btn" href="%s?%s=%s"><i class="icon fa fa-plus pull-right"></i></a>' %
+                          (
+                            reverse('%s:%s_%s_add' % (
+                                    self.admin_site.app_name, label, model_name)),
+                            RELATE_PREFIX + lookup_name, str(
+                instance.pk)) if add_perm else "",
 
-             '</li>'))
+                '</li>'))
             links.append(link)
-        ul_html = '<ul class="dropdown-menu" role="menu">%s</ul>' % ''.join(links)
-        return '<div class="dropdown related_menu pull-left"><a class="relate_menu dropdown-toggle" data-toggle="dropdown"><i class="icon icon-list"></i></a>%s</div>' % ul_html
+        ul_html = '<ul class="dropdown-menu" role="menu">%s</ul>' % ''.join(
+            links)
+        return '<div class="dropdown related_menu pull-right"><a title="%s" class="relate_menu dropdown-toggle" data-toggle="dropdown"><i class="icon fa fa-list"></i></a>%s</div>' % (_('Related Objects'), ul_html)
     related_link.short_description = '&nbsp;'
     related_link.allow_tags = True
+    related_link.allow_export = False
+    related_link.is_column = False
 
     def get_list_display(self, list_display):
         if self.use_related_menu and len(self.get_related_list()):
             list_display.append('related_link')
             self.admin_view.related_link = self.related_link
         return list_display
+
 
 class RelateObject(object):
 
@@ -82,7 +93,7 @@ class RelateObject(object):
         self.value = value
 
         parts = lookup.split(LOOKUP_SEP)
-        field = self.opts.get_field(parts[0])
+        field = self.opts.get_field_by_name(parts[0])[0]
 
         if not hasattr(field, 'rel') and not isinstance(field, RelatedObject):
             raise Exception(u'Relate Lookup field must a related field')
@@ -110,8 +121,8 @@ class RelateObject(object):
         else:
             to_model_name = force_unicode(self.to_model._meta.verbose_name)
 
-        return mark_safe(u"<span class='rel-brand'>%s's</span> %s" % (to_model_name, force_unicode(self.opts.verbose_name)))
-        
+        return mark_safe(u"<span class='rel-brand'>%s <i class='fa fa-caret-right'></i></span> %s" % (to_model_name, force_unicode(self.opts.verbose_name_plural)))
+
 
 class BaseRelateDisplayPlugin(BaseAdminPlugin):
 
@@ -119,7 +130,8 @@ class BaseRelateDisplayPlugin(BaseAdminPlugin):
         self.relate_obj = None
         for k, v in self.request.REQUEST.items():
             if smart_str(k).startswith(RELATE_PREFIX):
-                self.relate_obj = RelateObject(self.admin_view, smart_str(k)[len(RELATE_PREFIX):], v)
+                self.relate_obj = RelateObject(
+                    self.admin_view, smart_str(k)[len(RELATE_PREFIX):], v)
                 break
         return bool(self.relate_obj)
 
@@ -131,6 +143,7 @@ class BaseRelateDisplayPlugin(BaseAdminPlugin):
 
     def _get_url(self, url):
         return url + ('&' if url.find('?') > 0 else '?') + ('%s=%s' % self._get_relate_params())
+
 
 class ListRelateDisplayPlugin(BaseRelateDisplayPlugin):
 
@@ -144,7 +157,8 @@ class ListRelateDisplayPlugin(BaseRelateDisplayPlugin):
 
     def get_context(self, context):
         context['brand_name'] = self.relate_obj.get_brand_name()
-        if context.has_key('add_url'):
+        context['rel_objs'] = self.relate_obj.to_objs
+        if 'add_url' in context:
             context['add_url'] = self._get_url(context['add_url'])
         return context
 
@@ -156,11 +170,13 @@ class ListRelateDisplayPlugin(BaseRelateDisplayPlugin):
                 pass
         return list_display
 
+
 class EditRelateDisplayPlugin(BaseRelateDisplayPlugin):
 
     def get_form_datas(self, datas):
         if self.admin_view.org_obj is None and self.admin_view.request_method == 'get':
-            datas['initial'][self.relate_obj.field.name] = self.relate_obj.value
+            datas['initial'][
+                self.relate_obj.field.name] = self.relate_obj.value
         return datas
 
     def post_response(self, response):
@@ -169,12 +185,13 @@ class EditRelateDisplayPlugin(BaseRelateDisplayPlugin):
         return response
 
     def get_context(self, context):
-        if context.has_key('delete_url'):
+        if 'delete_url' in context:
             context['delete_url'] = self._get_url(context['delete_url'])
         return context
 
     def block_after_fieldsets(self, context, nodes):
         return self._get_input()
+
 
 class DeleteRelateDisplayPlugin(BaseRelateDisplayPlugin):
 
@@ -191,5 +208,3 @@ site.register_plugin(ListRelateDisplayPlugin, ListAdminView)
 site.register_plugin(EditRelateDisplayPlugin, CreateAdminView)
 site.register_plugin(EditRelateDisplayPlugin, UpdateAdminView)
 site.register_plugin(DeleteRelateDisplayPlugin, DeleteAdminView)
-
-

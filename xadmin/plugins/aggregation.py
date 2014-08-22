@@ -1,4 +1,5 @@
 from django.db.models import FieldDoesNotExist, Avg, Max, Min, Count, Sum
+from django.utils.translation import ugettext as _
 
 from xadmin.sites import site
 from xadmin.views import BaseAdminPlugin, ListAdminView
@@ -10,8 +11,9 @@ AGGREGATE_METHODS = {
     'min': Min, 'max': Max, 'avg': Avg, 'sum': Sum, 'count': Count
 }
 AGGREGATE_TITLE = {
-    'min': 'Min', 'max': 'Max', 'avg': 'Avg', 'sum': 'Sum', 'count': 'Count'
+    'min': _('Min'), 'max': _('Max'), 'avg': _('Avg'), 'sum': _('Sum'), 'count': _('Count')
 }
+
 
 class AggregationPlugin(BaseAdminPlugin):
 
@@ -22,7 +24,7 @@ class AggregationPlugin(BaseAdminPlugin):
 
     def _get_field_aggregate(self, field_name, obj, row):
         item = ResultItem(field_name, row)
-        item.classes = ['aggregate',]
+        item.classes = ['aggregate', ]
         if field_name not in self.aggregate_fields:
             item.text = ""
         else:
@@ -43,8 +45,8 @@ class AggregationPlugin(BaseAdminPlugin):
 
     def _get_aggregate_row(self):
         queryset = self.admin_view.list_queryset._clone()
-        obj = queryset.aggregate(*[AGGREGATE_METHODS[method](field_name) for field_name, method in \
-                self.aggregate_fields.items() if method in AGGREGATE_METHODS])
+        obj = queryset.aggregate(*[AGGREGATE_METHODS[method](field_name) for field_name, method in
+                                   self.aggregate_fields.items() if method in AGGREGATE_METHODS])
 
         row = ResultRow()
         row['is_display_first'] = False
@@ -53,12 +55,14 @@ class AggregationPlugin(BaseAdminPlugin):
         return row
 
     def results(self, rows):
-        rows.append(self._get_aggregate_row())
+        if rows:
+            rows.append(self._get_aggregate_row())
         return rows
 
     # Media
     def get_media(self, media):
-        media.add_css({'screen': [self.static('xadmin/css/aggregation.css'),]})
+        media.add_css({'screen': [self.static(
+            'xadmin/css/xadmin.plugin.aggregation.css'), ]})
         return media
 
 
